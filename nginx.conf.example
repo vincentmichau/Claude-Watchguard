@@ -1,0 +1,122 @@
+# Night Watch - Configuration Nginx
+# Placez ce fichier dans /etc/nginx/sites-available/night-watch
+# Puis: sudo ln -s /etc/nginx/sites-available/night-watch /etc/nginx/sites-enabled/
+
+# Redirection HTTP vers HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name votre-domaine.com www.votre-domaine.com;
+    
+    # Redirection permanente vers HTTPS
+    return 301 https://$server_name$request_uri;
+}
+
+# Configuration HTTPS
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name votre-domaine.com www.votre-domaine.com;
+
+    # Certificats SSL (Let's Encrypt recommandé)
+    ssl_certificate /etc/letsencrypt/live/votre-domaine.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/votre-domaine.com/privkey.pem;
+    
+    # Configuration SSL moderne
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Logs
+    access_log /var/log/nginx/night-watch-access.log;
+    error_log /var/log/nginx/night-watch-error.log;
+
+    # Max upload size (ajuster selon vos besoins)
+    client_max_body_size 10M;
+
+    # Compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml+rss;
+
+    # Frontend (React build)
+    location / {
+        root /chemin/vers/night-watch-app/frontend/build;
+        try_files $uri $uri/ /index.html;
+        
+        # Cache des assets statiques
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+
+    # Backend API
+    location /api {
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # WebSocket (Socket.io)
+    location /socket.io {
+        proxy_pass http://localhost:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket timeouts
+        proxy_connect_timeout 7d;
+        proxy_send_timeout 7d;
+        proxy_read_timeout 7d;
+    }
+
+    # Uploads (sécurisé - nécessite authentification)
+    location /uploads {
+        alias /chemin/vers/night-watch-app/backend/uploads;
+        
+        # Autoriser seulement certains types de fichiers
+        location ~* \.(jpg|jpeg|png|webp|pdf)$ {
+            # En production, ajouter une vérification d'authentification
+            # via un module nginx ou proxy vers le backend
+        }
+    }
+
+    # Health check
+    location /health {
+        proxy_pass http://localhost:5000/health;
+        access_log off;
+    }
+}
+
+# Configuration pour obtenir un certificat SSL avec certbot:
+# 1. Installer certbot: sudo apt install certbot python3-certbot-nginx
+# 2. Obtenir le certificat: sudo certbot --nginx -d votre-domaine.com -d www.votre-domaine.com
+# 3. Renouvellement automatique: sudo certbot renew --dry-run
